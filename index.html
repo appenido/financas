@@ -531,7 +531,8 @@ const IC = {
   cartao:'M3 6h18v12H3zM3 10h18M7 15h3',
   chave:'M14.5 4a5.5 5.5 0 1 1-5.2 7.3L3 17.5V21h3.5v-2h2v-2h2l1.2-1.2A5.5 5.5 0 0 1 14.5 4zM16 8h.01',
   info:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5M12 8h.01',
-  receber:'M12 3v12M7 10l5 5 5-5M4 15v5h16v-5'
+  receber:'M12 3v12M7 10l5 5 5-5M4 15v5h16v-5',
+  bloco:'M3 10h18v10H3zM5.5 10V7.5h5V10M13.5 10V7.5h5V10'
 };
 const ic = (n, extra = '') => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true" ${extra}><path d="${IC[n]}"/></svg>`;
 const LOGO = `<svg class="logo" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="11" fill="#173a5d"/><rect x="9" y="20" width="5.5" height="11" rx="2" fill="#7fd3c9"/><rect x="17.25" y="14" width="5.5" height="17" rx="2" fill="#1aa59e"/><rect x="25.5" y="8" width="5.5" height="23" rx="2" fill="#e0a83c"/></svg>`;
@@ -542,8 +543,8 @@ function gravarLocal(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } 
 
 const S = {
   user: null, view: 'painel', pronto: false,
-  contas: [], saldos: {}, cps: [], crs: [], dividas: [], lancs: [], desde: null, extra: {},
-  f: { cpStatus:'pendente', cpBusca:'', crStatus:'pendente', crBusca:'', lMes: mesDe(hoje()), lTipo:'', lConta:'', lEsfera:'', lBusca:'', aPeriodo: 6, aEsfera:'', contasInativas:false },
+  contas: [], saldos: {}, cps: [], crs: [], dividas: [], lancs: [], lego: [], legoErro: false, desde: null, extra: {},
+  f: { cpStatus:'pendente', cpBusca:'', crStatus:'pendente', crBusca:'', lMes: mesDe(hoje()), lTipo:'', lConta:'', lEsfera:'', lBusca:'', aPeriodo: 6, aEsfera:'', contasInativas:false, gStatus:'todas', gCanal:'', gBusca:'' },
   oculto: lerLocal('cf-oculto', false),
   imp: null
 };
@@ -566,15 +567,17 @@ async function buscarTudo(fabrica){
 }
 async function carregar(){
   const desde = mesAdd(mesDe(hoje()), -13) + '-01';
-  const [contas, saldos, cps, crs, dividas, lancs] = await Promise.all([
+  const [contas, saldos, cps, crs, dividas, lancs, lego] = await Promise.all([
     q(sb.from('fin_contas').select('*').order('nome')),
     q(sb.from('fin_saldos').select('conta_id,saldo')),
     buscarTudo(() => sb.from('fin_contas_pagar').select('*').or(`status.eq.pendente,vencimento.gte.${desde}`).order('vencimento').order('id')),
     buscarTudo(() => sb.from('fin_contas_receber').select('*').or(`status.eq.pendente,recebido_em.gte.${desde}`).order('id')),
     q(sb.from('fin_dividas').select('*').order('credor')),
-    buscarTudo(() => sb.from('fin_lancamentos').select('*').gte('data', desde).order('data', { ascending:false }).order('criado_em', { ascending:false }).order('id'))
+    buscarTudo(() => sb.from('fin_lancamentos').select('*').gte('data', desde).order('data', { ascending:false }).order('criado_em', { ascending:false }).order('id')),
+    buscarTudo(() => sb.from('fin_lego').select('*').order('data', { ascending:false }).order('id')).catch(() => null)
   ]);
   S.contas = contas; S.cps = cps; S.dividas = dividas;
+  S.legoErro = lego === null; S.lego = lego || [];
   S.crs = crs.sort((a, b) => (a.previsao || '9999').localeCompare(b.previsao || '9999') || String(a.descricao).localeCompare(String(b.descricao), 'pt-BR')); S.lancs = lancs; S.desde = desde; S.extra = {};
   S.saldos = Object.fromEntries(saldos.map(s => [s.conta_id, Number(s.saldo)]));
   S.pronto = true;
@@ -653,11 +656,12 @@ const NAV = [
   ['receber','A receber','receber'],
   ['lancamentos','Lançamentos','lista'],
   ['analise','Análise','grafico'],
+  ['lego','LEGO','bloco'],
   ['contas','Contas e bancos','banco'],
   ['dividas','Dívidas','divida'],
   ['mais','Backup e acesso','chave']
 ];
-const FAB = { padrao: ['novoLanc', 'Novo lançamento'], pagar: ['novaCP', 'Nova conta a pagar'], receber: ['novaCR', 'Nova conta a receber'], contas: ['novaConta', 'Nova conta'], dividas: ['novaDivida', 'Nova dívida'] };
+const FAB = { padrao: ['novoLanc', 'Novo lançamento'], pagar: ['novaCP', 'Nova conta a pagar'], receber: ['novaCR', 'Nova conta a receber'], contas: ['novaConta', 'Nova conta'], dividas: ['novaDivida', 'Nova dívida'], lego: ['novaLego', 'Nova compra de LEGO'] };
 const NAV_MOBILE = [['painel','Painel','home'],['pagar','A pagar','boleto'],['lancamentos','Lançamentos','lista'],['analise','Análise','grafico'],['mais','Mais','mais']];
 
 function montarApp(){
@@ -702,7 +706,7 @@ function renderMain(){
   m.innerHTML = VIEWS[S.view]();
   document.querySelectorAll('[data-nav]').forEach(a => {
     const v = a.dataset.nav;
-    const ativo = v === S.view || (v === 'mais' && a.closest('.bottom') && ['contas','dividas','receber','mais'].includes(S.view));
+    const ativo = v === S.view || (v === 'mais' && a.closest('.bottom') && ['contas','dividas','receber','lego','mais'].includes(S.view));
     a.classList.toggle('ativo', ativo);
     if (ativo) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
@@ -1712,20 +1716,210 @@ function desenharBarras(el, dados){
   svg.addEventListener('pointermove', mostrar); svg.addEventListener('pointerdown', mostrar); svg.addEventListener('pointerleave', esconder);
 }
 let larguraAnt = window.innerWidth;
-window.addEventListener('resize', () => { clearTimeout(window.__rz); window.__rz = setTimeout(() => { if (Math.abs(window.innerWidth - larguraAnt) > 30 && S.view === 'analise') { larguraAnt = window.innerWidth; renderMain(); } }, 200); });
+window.addEventListener('resize', () => { clearTimeout(window.__rz); window.__rz = setTimeout(() => { if (Math.abs(window.innerWidth - larguraAnt) > 30 && (S.view === 'analise' || S.view === 'lego')) { larguraAnt = window.innerWidth; renderMain(); } }, 200); });
+
+/* ---------------- LEGO ---------------- */
+const LEGO_SIT = {
+  confirmado: ['Confirmado', 'ok'],
+  provavel: ['Provável', 'ouro'],
+  devolucao: ['Devolvido, falta o estorno', 'perigo'],
+  a_pagar: ['A pagar', 'perigo'],
+  sem_valor: ['Falta o valor', 'perigo'],
+  estornado: ['Estornado', ''],
+  nao_concluido: ['Não concluído', '']
+};
+const legoConta = g => g.situacao === 'confirmado' || g.situacao === 'provavel';
+const legoPend = g => g.situacao === 'devolucao' || g.situacao === 'a_pagar' || g.situacao === 'sem_valor';
+const legoFora = g => g.situacao === 'estornado' || g.situacao === 'nao_concluido';
+const legoNoCartao = g => /cart[aã]o ita[uú]/i.test(g.pagamento || '');
+const legoCanal = g => g.canal || g.loja;
+function legoMeses(){
+  const comp = S.lego.filter(legoConta);
+  if (!comp.length) return [];
+  let m = mesDe(comp.reduce((a, g) => g.data < a ? g.data : a, comp[0].data));
+  const fim = mesDe(hoje()), out = [];
+  while (m <= fim && out.length < 240) { out.push(m); m = mesAdd(m, 1); }
+  return out;
+}
+VIEWS.lego = () => {
+  const f = S.f, ano = hoje().slice(0, 4);
+  const cab = `<div class="cab"><div><h1>LEGO</h1><p>Sets, peças, leilões e acessórios comprados</p></div>
+    <div class="acoes"><button class="btn primario" data-act="novaLego">${ic('plus')}Nova compra</button></div></div>`;
+  if (S.legoErro) return cab + `<section class="card"><div class="vazio">Não consegui carregar as compras de LEGO. Recarregue a página.</div></section>`;
+  if (!S.lego.length) return cab + `<section class="card"><div class="vazio">Nenhuma compra de LEGO cadastrada.<br><button class="btn" data-act="novaLego">${ic('plus')}Cadastrar compra</button></div></section>`;
+  const soma = a => a.reduce((s, g) => s + Number(g.valor || 0), 0);
+  const conta = S.lego.filter(legoConta);
+  const meses = legoMeses();
+  const porMes = meses.map(m => { const arr = conta.filter(g => mesDe(g.data) === m); return { m, conf: soma(arr.filter(g => g.situacao === 'confirmado')), prov: soma(arr.filter(g => g.situacao === 'provavel')), n: arr.length }; });
+  const total = soma(conta);
+  const doAno = soma(conta.filter(g => g.data.startsWith(ano)));
+  const mesesAno = meses.filter(m => m.startsWith(ano)).length || 1;
+  const pend = S.lego.filter(legoPend).sort((a, b) => a.data.localeCompare(b.data));
+  const semValor = pend.filter(g => g.situacao === 'sem_valor').length;
+  const maior = porMes.reduce((a, x) => !a || x.conf + x.prov > a.conf + a.prov ? x : a, null);
+  const porCanal = new Map();
+  for (const g of conta) porCanal.set(legoCanal(g), (porCanal.get(legoCanal(g)) || 0) + Number(g.valor || 0));
+  const cats = [...porCanal.entries()].map(([nome, v]) => ({ nome, v })).sort((a, b) => b.v - a.v);
+  const noCartao = soma(conta.filter(legoNoCartao));
+  if (meses.length) depois.push(() => desenharBarrasLego($('#g-lego'), porMes));
+
+  const busca = norm(f.gBusca.trim());
+  let lista = S.lego;
+  if (f.gStatus === 'gastos') lista = lista.filter(legoConta);
+  else if (f.gStatus === 'pendentes') lista = lista.filter(legoPend);
+  else if (f.gStatus === 'fora') lista = lista.filter(legoFora);
+  if (f.gCanal) lista = lista.filter(g => legoCanal(g) === f.gCanal);
+  if (busca) lista = lista.filter(g => norm([g.itens, g.loja, g.canal, g.pagamento, g.observacao].join(' ')).includes(busca));
+  const grupos = new Map();
+  for (const g of [...lista].sort((a, b) => b.data.localeCompare(a.data))) { const k = mesDe(g.data); if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(g); }
+  const corpo = grupos.size
+    ? [...grupos.entries()].map(([m, arr]) => `<div class="grupo-cab"><span>${nomeMes(m)}</span><span>${arr.some(legoConta) ? money(soma(arr.filter(legoConta))) : ''}</span></div><ul class="lista">${arr.map(linhaLego).join('')}</ul>`).join('')
+    : `<div class="vazio">${busca || f.gCanal ? 'Nada encontrado com esses filtros.' : 'Nenhuma compra nessa situação.'}</div>`;
+  const canais = [...new Set(S.lego.map(legoCanal))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const tot = k => porMes.reduce((a, x) => a + x[k], 0);
+
+  return `${cab}
+  <section class="chaves" style="margin:0 0 16px">
+    <div class="chave"><div class="r">Total gasto</div><div class="val">${money(total)}</div><div class="sub">${conta.length} compras${meses.length ? ' desde ' + nomeMes(meses[0]).toLowerCase() : ''}</div></div>
+    <div class="chave"><div class="r">Média por mês</div><div class="val">${money(total / (meses.length || 1))}</div><div class="sub">em ${meses.length} ${meses.length === 1 ? 'mês' : 'meses'}</div></div>
+    <div class="chave"><div class="r">Em ${ano}</div><div class="val">${money(doAno)}</div><div class="sub">${money(doAno / mesesAno)} por mês</div></div>
+    <div class="chave"><div class="r">Pendências</div><div class="val ${pend.length ? 'neg' : ''}">${money(soma(pend))}</div><div class="sub">${pend.length ? `${pend.length - semValor} a resolver${semValor ? `, ${semValor} sem valor` : ''}` : 'nada pendente'}</div></div>
+  </section>
+  ${meses.length ? `<section class="card"><div class="card-cab"><h2>Gasto por mês</h2>${maior ? `<span class="muted" style="font-size:13px">maior: ${nomeMes(maior.m).toLowerCase()}</span>` : ''}</div><div class="card-corpo">
+    <div class="legenda"><span><i style="background:var(--desp)"></i>Confirmado</span><span><i style="background:var(--desp);opacity:.4"></i>Provável</span></div>
+    <div class="grafico" id="g-lego" style="height:240px"></div>
+    <details class="tabela"><summary>Ver em tabela</summary><div class="rolavel"><table class="tab"><thead><tr><th>Mês</th><th class="n">Confirmado</th><th class="n">Provável</th><th class="n">Total</th><th class="n">Compras</th></tr></thead><tbody>
+      ${porMes.map(x => `<tr><td>${nomeMes(x.m)}</td><td class="n">${money(x.conf)}</td><td class="n">${money(x.prov)}</td><td class="n"><b>${money(x.conf + x.prov)}</b></td><td class="n">${x.n}</td></tr>`).join('')}
+      <tr class="total"><td>Total</td><td class="n">${money(tot('conf'))}</td><td class="n">${money(tot('prov'))}</td><td class="n">${money(total)}</td><td class="n">${conta.length}</td></tr></tbody></table></div></details>
+  </div></section>` : ''}
+  <div class="grade2 secao">
+    <section class="card"><div class="card-cab"><h2>Onde comprou</h2><span class="muted" style="font-size:13px">% do total</span></div><div class="card-corpo">
+      ${cats.length ? barrasCats(cats, 8, total, meses.length) : '<p class="muted">Sem compras com valor.</p>'}
+      <p class="muted" style="font-size:13px;margin:14px 0 0">${money(noCartao)} foram no cartão Itaú e já aparecem nos lançamentos, na categoria LEGO. O resto (Pix, outro cartão, PayPal) fica só aqui, porque não se sabe de qual conta saiu.</p>
+    </div></section>
+    <section class="card"><div class="card-cab"><h2>Pendências</h2></div>
+      ${pend.length ? `<ul class="lista">${pend.map(linhaLego).join('')}</ul>` : '<div class="card-corpo"><p class="muted" style="margin:0">Nada pendente.</p></div>'}
+      ${pend.some(g => g.situacao === 'devolucao') ? `<div class="card-corpo"><p class="muted" style="font-size:13px;margin:0">Os estornos esperados também estão em <a href="#receber">A receber</a>. Para preencher um valor que falta, toque na compra.</p></div>` : ''}
+    </section>
+  </div>
+  <h2 class="secao" style="margin-bottom:10px">Todas as compras</h2>
+  <div class="filtros">
+    <div class="seg" role="group" aria-label="Situação">${[['todas','Todas'],['gastos','Gastos'],['pendentes','Pendências'],['fora','Canceladas']].map(([v,t]) => `<button type="button" data-act="filtro" data-k="gStatus" data-v="${v}" aria-pressed="${f.gStatus === v}">${t}</button>`).join('')}</div>
+    <select data-f="gCanal" aria-label="Onde comprou"><option value="">Todas as lojas</option>${canais.map(c => `<option value="${esc(c)}" ${f.gCanal === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+    <input type="search" id="gBusca" data-f="gBusca" value="${esc(f.gBusca)}" placeholder="Buscar set, número ou loja" aria-label="Buscar compra">
+  </div>
+  <section class="card" style="padding-bottom:6px">${corpo}</section>`;
+};
+function linhaLego(g){
+  const d = pISO(g.data), [rot, cls] = LEGO_SIT[g.situacao] || [g.situacao, ''];
+  const anoD = String(d.getFullYear());
+  const sub = [g.loja, g.pagamento].filter(Boolean).join(', ');
+  const semV = g.valor === null || g.valor === undefined;
+  return `<li class="linha clicavel" data-act="editarLego" data-id="${g.id}">
+    <div class="data-bloco ${g.situacao === 'a_pagar' || g.situacao === 'sem_valor' || g.situacao === 'devolucao' ? 'perigo' : ''}"><b>${d.getDate()}</b><span>${MES_C[d.getMonth()]}${anoD !== hoje().slice(0, 4) ? '/' + anoD.slice(2) : ''}</span></div>
+    <div class="info"><div class="t" title="${esc(g.itens)}">${esc(g.itens)}</div><div class="s">${g.situacao !== 'confirmado' ? `<span class="chip ${cls}">${esc(rot)}</span> ` : ''}${esc(sub)}</div></div>
+    <div class="dir"><div class="valor"${legoFora(g) ? ' style="text-decoration:line-through;color:var(--muted);font-weight:500"' : ''}>${semV ? '<span class="neg" style="font-weight:500">sem valor</span>' : money(g.valor)}</div></div>
+  </li>`;
+}
+function desenharBarrasLego(el, dados){
+  if (!el) return;
+  const W = Math.max(280, el.clientWidth), H = el.clientHeight || 240, m = { t: 10, r: 6, b: 26, l: 52 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const maxV = Math.max(...dados.map(d => d.conf + d.prov), 1);
+  const passoY = passoBonito(maxV / 4), nTicks = Math.max(1, Math.ceil(maxV / passoY)), topo = passoY * nTicks;
+  const gw = iw / dados.length, bw = Math.max(6, Math.min(34, gw * 0.62));
+  const y = v => m.t + ih - (v / topo) * ih;
+  const pedaco = (x, y0, y1, arred, extra) => { const hh = y1 - y0; if (hh < 0.5) return ''; const r = arred ? Math.min(4, bw / 2, hh) : 0;
+    return `<path d="M${x},${y1} V${y0 + r} Q${x},${y0} ${x + r},${y0} H${x + bw - r} Q${x + bw},${y0} ${x + bw},${y0 + r} V${y1} Z" fill="var(--desp)" ${extra}/>`; };
+  let s = '';
+  for (let i = 0; i <= nTicks; i++) { const v = passoY * i, yy = Math.round(y(v)) + .5; s += `<line class="${i ? 'grade' : 'base'}" x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}"/><text class="eixo" x="${m.l - 8}" y="${yy + 4}" text-anchor="end">${i ? curto(v) : '0'}</text>`; }
+  const passo = dados.length > 8 && W < 560 ? 2 : 1;
+  dados.forEach((d, i) => {
+    const x = m.l + gw * i + (gw - bw) / 2, yc = y(d.conf), yt = y(d.conf + d.prov), base = m.t + ih;
+    s += pedaco(x, yc, base, d.prov <= 0, '');
+    if (d.prov > 0) s += pedaco(x, yt, d.conf > 0 ? yc - 1 : base, true, 'fill-opacity=".4"');
+    if (i % passo === 0 || i === dados.length - 1) s += `<text class="eixo" x="${m.l + gw * i + gw / 2}" y="${H - 7}" text-anchor="middle">${nomeMesCurto(d.m)}</text>`;
+    s += `<rect x="${m.l + gw * i}" y="${m.t}" width="${gw}" height="${ih}" fill="transparent" data-i="${i}"/>`;
+  });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Gasto com LEGO por mês">${s}</svg><div class="dica" aria-hidden="true"></div>`;
+  const dica = el.querySelector('.dica'), svg = el.querySelector('svg');
+  const esconder = () => { dica.classList.remove('vis'); svg.querySelectorAll('rect[data-i]').forEach(rr => rr.setAttribute('fill', 'transparent')); };
+  const mostrar = ev => {
+    const t = ev.target.closest('rect[data-i]'); if (!t) return esconder();
+    const d = dados[+t.dataset.i];
+    dica.innerHTML = `<b>${nomeMes(d.m)}</b><div><span><i style="background:var(--desp)"></i>Confirmado</span><span class="money">${brl(d.conf)}</span></div><div><span><i style="background:var(--desp);opacity:.4"></i>Provável</span><span class="money">${brl(d.prov)}</span></div><div style="margin-top:4px;border-top:1px solid rgba(255,255,255,.2);padding-top:4px"><span>Total, ${d.n} compra${d.n === 1 ? '' : 's'}</span><span class="money">${brl(d.conf + d.prov)}</span></div>`;
+    const r = el.getBoundingClientRect(); let x = ev.clientX - r.left + 14; const yy = Math.max(0, ev.clientY - r.top - 40);
+    dica.classList.add('vis'); if (x + dica.offsetWidth > r.width) x = ev.clientX - r.left - dica.offsetWidth - 14;
+    dica.style.left = Math.max(0, x) + 'px'; dica.style.top = yy + 'px';
+    svg.querySelectorAll('rect[data-i]').forEach(rr => rr.setAttribute('fill', rr === t ? 'rgba(127,150,170,.10)' : 'transparent'));
+  };
+  svg.addEventListener('pointermove', mostrar); svg.addEventListener('pointerdown', mostrar); svg.addEventListener('pointerleave', esconder);
+}
+function formLego(g){
+  const novo = !g; g = g || { data: hoje(), situacao: 'confirmado' };
+  const ord = a => [...new Set(a.filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
+  const lojas = ord(S.lego.map(x => x.loja));
+  const canais = ord(['Amazon', 'Mercado Livre', 'OLX', 'Brick Owl', 'BrickLink', 'Leilões', 'LEGO Store', 'Acessórios e apps', ...S.lego.map(x => x.canal)]);
+  abrir(`<form class="modal" data-form="lego" data-id="${g.id || ''}" novalidate>
+    <header><h2>${novo ? 'Nova compra de LEGO' : 'Compra de LEGO'}</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
+    <div class="corpo">
+      <div class="campos">
+        <label class="campo cheio"><span>O que comprou</span><input name="itens" required maxlength="300" value="${esc(g.itens)}" placeholder="Ex.: Speed Champions 77245 Aston Martin" autofocus></label>
+        <label class="campo valor"><span>Valor pago</span><input name="valor" inputmode="decimal" value="${esc(valorInput(g.valor))}" placeholder="0,00"><small>Total do pedido, com frete. Deixe em branco se não souber.</small></label>
+        <label class="campo"><span>Data da compra</span><input name="data" type="date" required value="${esc(g.data)}"></label>
+        <label class="campo"><span>Loja</span><input name="loja" required maxlength="120" list="dl-lego-loja" value="${esc(g.loja)}" placeholder="Ex.: Mercado Livre"><datalist id="dl-lego-loja">${lojas.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+        <label class="campo"><span>Grupo no gráfico</span><input name="canal" maxlength="60" list="dl-lego-canal" value="${esc(g.canal)}" placeholder="Igual à loja"><datalist id="dl-lego-canal">${canais.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+        <label class="campo"><span>Situação</span><select name="situacao">${Object.entries(LEGO_SIT).map(([k, [t]]) => `<option value="${k}" ${g.situacao === k ? 'selected' : ''}>${t}</option>`).join('')}</select><small>Só Confirmado e Provável entram no total.</small></label>
+        <label class="campo"><span>Como pagou</span><input name="pagamento" maxlength="120" value="${esc(g.pagamento)}" placeholder="Ex.: Pix, cartão Itaú 3x"></label>
+        <label class="campo cheio"><span>Observação</span><textarea name="observacao" maxlength="500">${esc(g.observacao)}</textarea></label>
+        ${g.fonte ? `<div class="campo cheio"><small class="muted">De onde veio o valor: ${esc(g.fonte)}</small></div>` : ''}
+      </div>
+      <p class="erro" role="alert"></p>
+    </div>
+    <footer>
+      ${novo ? '' : `<div class="esq"><button type="button" class="btn perigo peq" data-act="excluirLego" data-id="${g.id}">${ic('lixo')}Excluir</button></div>`}
+      <button class="btn primario" type="submit">${novo ? 'Salvar' : 'Salvar alterações'}</button>
+    </footer></form>`);
+}
+ACTS.novaLego = () => formLego(null);
+ACTS.editarLego = ({ id }) => formLego(S.lego.find(g => g.id === id));
+FORMS.lego = async (fd, form) => {
+  const id = form.dataset.id;
+  const itens = (fd.itens || '').trim(), loja = (fd.loja || '').trim(), vTxt = (fd.valor || '').trim();
+  const valor = vTxt ? parseValor(vTxt) : null;
+  if (!itens) return 'Informe o que foi comprado.';
+  if (!fd.data) return 'Informe a data da compra.';
+  if (!loja) return 'Informe a loja.';
+  if (vTxt && !(valor > 0)) return 'Valor inválido. Use, por exemplo, 149,90.';
+  let situacao = fd.situacao in LEGO_SIT ? fd.situacao : 'confirmado';
+  if (valor === null && (situacao === 'confirmado' || situacao === 'provavel')) situacao = 'sem_valor';
+  if (valor !== null && situacao === 'sem_valor') situacao = 'confirmado';
+  const reg = { data: fd.data, loja, canal: (fd.canal || '').trim() || loja, itens, valor: valor === null ? null : r2(valor), situacao,
+    pagamento: (fd.pagamento || '').trim() || null, observacao: (fd.observacao || '').trim() || null };
+  if (id) { await q(sb.from('fin_lego').update(reg).eq('id', id)); toast('Compra atualizada'); }
+  else { await q(sb.from('fin_lego').insert(reg)); toast('Compra cadastrada'); }
+  fechar(); await recarregar();
+};
+ACTS.excluirLego = ({ id }) => {
+  const g = S.lego.find(x => x.id === id); if (!g) return;
+  confirmar('Excluir compra?', `${esc(g.itens)}${g.valor ? ' (' + money(g.valor) + ')' : ''} será excluída da lista de LEGO. Os lançamentos do cartão não mudam.`, 'Excluir', async () => {
+    await q(sb.from('fin_lego').delete().eq('id', id)); toast('Compra excluída'); await recarregar();
+  }, true);
+};
 
 /* ---------------- mais: backup e acesso ---------------- */
 VIEWS.mais = () => `
   <div class="cab"><div><h1>Mais</h1><p>${esc(S.user ? S.user.email : '')}</p></div></div>
   <section class="card menu-lista" style="margin-bottom:16px" data-so-mobile>
     <a href="#receber">${ic('receber')}<span>A receber<small>Pagamentos e repasses que ainda vão entrar</small></span></a>
+    <a href="#lego">${ic('bloco')}<span>LEGO<small>Quanto foi gasto em LEGO, mês a mês</small></span></a>
     <a href="#contas">${ic('banco')}<span>Contas e bancos<small>Saldos, cartões e investimentos</small></span></a>
     <a href="#dividas">${ic('divida')}<span>Dívidas<small>Financiamentos e empréstimos</small></span></a>
     <button type="button" data-act="importar">${ic('upload')}<span>Importar extrato<small>OFX ou CSV do banco</small></span></button>
   </section>
   <h2 style="margin:0 0 10px">Backup</h2>
   <section class="card menu-lista" style="margin-bottom:16px">
-    <button type="button" data-act="backup">${ic('download')}<span>Baixar backup completo<small>Arquivo JSON com todas as contas, lançamentos, boletos, valores a receber e dívidas</small></span></button>
+    <button type="button" data-act="backup">${ic('download')}<span>Baixar backup completo<small>Arquivo JSON com todas as contas, lançamentos, boletos, valores a receber, dívidas e compras de LEGO</small></span></button>
     <button type="button" data-act="exportarCsv">${ic('download')}<span>Exportar lançamentos para Excel<small>Arquivo CSV, separado por ponto e vírgula</small></span></button>
   </section>
   <h2 style="margin:0 0 10px">Acesso</h2>
@@ -1736,14 +1930,15 @@ VIEWS.mais = () => `
   </section>`;
 ACTS.backup = async () => {
   toast('Preparando backup…');
-  const [contas, cps, crs, dividas, lancs] = await Promise.all([
+  const [contas, cps, crs, dividas, lancs, lego] = await Promise.all([
     q(sb.from('fin_contas').select('*').order('nome')),
     buscarTudo(() => sb.from('fin_contas_pagar').select('*').order('vencimento').order('id')),
     buscarTudo(() => sb.from('fin_contas_receber').select('*').order('id')),
     q(sb.from('fin_dividas').select('*').order('credor')),
-    buscarTudo(() => sb.from('fin_lancamentos').select('*').order('data').order('id'))
+    buscarTudo(() => sb.from('fin_lancamentos').select('*').order('data').order('id')),
+    buscarTudo(() => sb.from('fin_lego').select('*').order('data').order('id')).catch(() => [])
   ]);
-  baixar(JSON.stringify({ app: 'Central Financeira', versao: 1, exportado_em: new Date().toISOString(), contas, contas_pagar: cps, contas_receber: crs, dividas, lancamentos: lancs }, null, 2), `backup-financas-${hoje()}.json`, 'application/json');
+  baixar(JSON.stringify({ app: 'Central Financeira', versao: 1, exportado_em: new Date().toISOString(), contas, contas_pagar: cps, contas_receber: crs, dividas, lancamentos: lancs, compras_lego: lego }, null, 2), `backup-financas-${hoje()}.json`, 'application/json');
   toast('Backup baixado');
 };
 ACTS.exportarCsv = async () => {
