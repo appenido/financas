@@ -393,7 +393,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY, {
 /* ---------------- constantes ---------------- */
 const TIPOS_CONTA = { corrente:'Conta corrente', poupanca:'Poupança', cartao:'Cartão de crédito', investimento:'Investimento', carteira:'Dinheiro', outro:'Outra' };
 const TIPOS_DIVIDA = { financiamento_imovel:'Financiamento imobiliário', financiamento_veiculo:'Financiamento de veículo', emprestimo:'Empréstimo pessoal', consignado:'Consignado', cartao_parcelado:'Parcelamento no cartão', cheque_especial:'Cheque especial', pessoa:'Dívida com pessoa', outro:'Outra' };
-const CAT_DESP = ['Moradia','Contas da casa','Mercado','Alimentação fora','Transporte','Combustível','Saúde','Educação','Filhos','Pets','Lazer','Viagens','Assinaturas','Vestuário','Cuidados pessoais','Impostos e taxas','Seguros','Dívidas e financiamentos','Tarifas bancárias','Presentes e doações','LEGO','Consultório','Outros'];
+const CAT_DESP = ['Moradia','Contas da casa','Mercado','Alimentação fora','Transporte','Combustível','Saúde','Educação','Filhos','Pets','Lazer','Viagens','Assinaturas','Vestuário','Cuidados pessoais','Impostos e taxas','Seguros','Dívidas e financiamentos','Tarifas bancárias','Presentes e doações','LEGO','Consultório','Médicos e equipe','Contabilidade','Outros'];
 const CAT_REC = ['Honorários e consultas','Repasses','Salário e pró-labore','Vendas LEGO','Rendimentos','Aluguéis','Reembolsos','Outras receitas'];
 const MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
 const MES_C = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
@@ -604,7 +604,7 @@ function patrimonio(){
   return { disp, inv, fat, div, parcelas, nDisp, pl: disp + inv - fat - div };
 }
 function categorias(tipo){
-  const base = tipo === 'receita' ? CAT_REC : tipo === 'transferencia' ? ['Pagamento de fatura','Aplicação','Resgate','Transferência'] : CAT_DESP;
+  const base = tipo === 'receita' ? CAT_REC : tipo === 'transferencia' ? ['Pagamento de fatura','Aplicação','Resgate','Transferência','Retirada da clínica','Aporte na clínica'] : CAT_DESP;
   const usadas = new Set(base);
   for (const l of S.lancs) if (l.categoria && l.tipo === tipo) usadas.add(l.categoria);
   if (tipo === 'despesa') for (const c of S.cps) if (c.categoria) usadas.add(c.categoria);
@@ -1168,7 +1168,7 @@ VIEWS.lancamentos = () => {
 const cabLanc = () => `<div class="cab"><div><h1>Lançamentos</h1><p>Tudo o que entrou e saiu</p></div><div class="acoes"><button class="btn" data-act="importar">${ic('upload')}Importar extrato</button><button class="btn primario" data-act="novoLanc">${ic('plus')}Novo lançamento</button></div></div>`;
 function linhaLanc(l){
   const ico = l.tipo === 'receita' ? 'cima' : l.tipo === 'despesa' ? 'baixo' : 'transf';
-  const conta = l.tipo === 'transferencia' ? `${nomeConta(l.conta_id)} para ${nomeConta(l.conta_destino_id)}` : nomeConta(l.conta_id);
+  const conta = l.tipo === 'transferencia' ? `${nomeConta(l.conta_id) || 'Conta fora da central'} para ${nomeConta(l.conta_destino_id) || 'conta fora da central'}` : nomeConta(l.conta_id);
   const sub = [l.categoria, conta, l.esfera === 'profissional' ? 'profissional' : ''].filter(Boolean).join(', ');
   return `<li class="linha clicavel" data-act="editarLanc" data-id="${l.id}"><div class="tipo-ic ${l.tipo}">${ic(ico)}</div>
     <div class="info"><div class="t">${esc(l.descricao)}</div><div class="s">${esc(sub) || '&nbsp;'}</div></div>
@@ -1202,9 +1202,12 @@ function formLanc(l, tipoPadrao){
       <button type="button" class="btn" data-act="fechar">Cancelar</button><button class="btn primario" type="submit">${novo ? 'Salvar lançamento' : 'Salvar alterações'}</button></footer></form>`);
 }
 function blocoContaLanc(l){
-  if (l.tipo === 'transferencia') return `<div class="campos"><label class="campo"><span>De</span><select name="conta_id">${opcoesContas(l.conta_id, { vazio: 'Escolha' })}</select></label>
-    <label class="campo"><span>Para</span><select name="conta_destino_id">${opcoesContas(l.conta_destino_id, { vazio: 'Escolha' })}</select></label></div>
-    <small class="muted">Pagamento de fatura: da conta corrente para o cartão. Aplicação: da conta para o investimento.</small>`;
+  if (l.tipo === 'transferencia') {
+    const opts = sel => `<option value="">Escolha</option><option value="fora" ${sel === null ? 'selected' : ''}>Conta fora da central</option>` + opcoesContas(sel, { vazio: null });
+    return `<div class="campos"><label class="campo"><span>De</span><select name="conta_id">${opts(l.conta_id)}</select></label>
+    <label class="campo"><span>Para</span><select name="conta_destino_id">${opts(l.conta_destino_id)}</select></label></div>
+    <small class="muted">Pagamento de fatura: da conta corrente para o cartão. Aplicação: da conta para o investimento. Dinheiro que foi para (ou veio de) uma conta que não está cadastrada aqui: escolha “Conta fora da central”.</small>`;
+  }
   return `<label class="campo"><span>${l.tipo === 'receita' ? 'Entrou em' : 'Saiu de'}</span><select name="conta_id">${opcoesContas(l.conta_id, { vazio: 'Sem conta específica' })}</select></label>`;
 }
 ACTS.tipoLanc = ({ v }, el) => {
@@ -1223,11 +1226,13 @@ FORMS.lanc = async (fd, form) => {
   if (!fd.data) return 'Informe a data.';
   if (!fd.descricao.trim()) return 'Informe a descrição.';
   if (fd.tipo === 'transferencia') {
-    if (!fd.conta_id || !fd.conta_destino_id) return 'Escolha as duas contas da transferência.';
+    if (!fd.conta_id || !fd.conta_destino_id) return 'Escolha as duas contas da transferência (ou “Conta fora da central”).';
+    if (fd.conta_id === 'fora' && fd.conta_destino_id === 'fora') return 'Pelo menos uma das contas precisa estar cadastrada aqui.';
     if (fd.conta_id === fd.conta_destino_id) return 'As contas de origem e destino precisam ser diferentes.';
   }
+  const fora = v => v === 'fora' ? null : (v || null);
   const reg = { tipo: fd.tipo, valor: r2(valor), data: fd.data, descricao: fd.descricao.trim(), categoria: (fd.categoria || '').trim() || null,
-    esfera: fd.esfera, conta_id: fd.conta_id || null, conta_destino_id: fd.tipo === 'transferencia' ? fd.conta_destino_id : null, observacao: (fd.observacao || '').trim() || null };
+    esfera: fd.esfera, conta_id: fora(fd.conta_id), conta_destino_id: fd.tipo === 'transferencia' ? fora(fd.conta_destino_id) : null, observacao: (fd.observacao || '').trim() || null };
   if (id) await q(sb.from('fin_lancamentos').update(reg).eq('id', id));
   else await q(sb.from('fin_lancamentos').insert(reg));
   fechar(); toast(id ? 'Alterações salvas' : 'Lançamento salvo');
