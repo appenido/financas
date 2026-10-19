@@ -111,7 +111,7 @@ main{padding:20px 16px 110px;max-width:1180px;margin:0 auto}
 .btn.perigo:hover{background:var(--danger-tint)}
 .btn.peq{min-height:34px;padding:5px 12px;font-size:14px}
 .btn.largo{width:100%}
-.btn-pagar svg.i{width:16px;height:16px;stroke-width:2.2}
+.btn-pagar svg.i{width:16px;height:16px;stroke-width:2.2;color:var(--muted)}
 .btn[disabled]{opacity:.55;cursor:default}
 .link{border:0;background:none;padding:0;color:var(--teal-ink);font-weight:500;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg)}
@@ -836,7 +836,7 @@ function linhaCP(c){
     <div class="data-bloco ${c.status === 'pago' ? 'pago' : venc ? 'perigo' : ehHoje ? 'hoje' : ''}"><b>${d.getDate()}</b><span>${MES_C[d.getMonth()]}</span></div>
     <div class="info"><div class="t">${esc(c.descricao)} ${rec}</div><div class="s"><span class="so-celular ${venc ? 'neg' : ''}">${status}${sub ? ', ' : ''}</span>${esc(sub) || '&nbsp;'}</div></div>
     <div class="dir"><div class="valor">${money(c.status === 'pago' ? (c.valor_pago ?? c.valor) : c.valor)}<small class="so-grande ${venc ? 'neg' : ''}">${status}</small></div>
-      ${c.status === 'pendente' ? `<button class="btn primario peq btn-pagar" data-act="pagar" data-id="${c.id}" aria-label="Pagar ${esc(c.descricao)}">${ic('check')}<span>Pagar</span></button>` : `<button class="btn peq" data-act="desfazer" data-id="${c.id}">Desfazer</button>`}</div>
+      ${c.status === 'pendente' ? `<button class="btn peq btn-pagar" data-act="pagar" data-id="${c.id}" aria-label="Pagar ${esc(c.descricao)}">${ic('check')}<span>Pagar</span></button>` : `<button class="btn peq" data-act="desfazer" data-id="${c.id}">Desfazer</button>`}</div>
   </li>`;
 }
 VIEWS.pagar = () => {
@@ -1021,7 +1021,7 @@ function linhaCR(c){
     <div class="data-bloco ${rec ? 'pago' : atras ? 'perigo' : ehHoje ? 'hoje' : ''}">${d ? `<b>${d.getDate()}</b><span>${MES_C[d.getMonth()]}</span>` : '<b>?</b><span>s/ data</span>'}</div>
     <div class="info"><div class="t">${esc(c.descricao)}</div><div class="s"><span class="so-celular ${atras ? 'neg' : ''}">${status}${sub ? ', ' : ''}</span>${esc(sub) || '&nbsp;'}</div></div>
     <div class="dir"><div class="valor pos">${money(rec ? (c.valor_recebido ?? c.valor) : c.valor)}<small class="so-grande ${atras ? 'neg' : ''}">${status}</small></div>
-      ${rec ? `<button class="btn peq" data-act="desfazerCR" data-id="${c.id}">Desfazer</button>` : `<button class="btn primario peq btn-pagar" data-act="receberCR" data-id="${c.id}" aria-label="Receber ${esc(c.descricao)}">${ic('check')}<span>Receber</span></button>`}</div>
+      ${rec ? `<button class="btn peq" data-act="desfazerCR" data-id="${c.id}">Desfazer</button>` : `<button class="btn peq btn-pagar" data-act="receberCR" data-id="${c.id}" aria-label="Receber ${esc(c.descricao)}">${ic('check')}<span>Receber</span></button>`}</div>
   </li>`;
 }
 VIEWS.receber = () => {
