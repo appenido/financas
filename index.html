@@ -656,6 +656,7 @@ const NAV = [
   ['receber','A receber','receber'],
   ['lancamentos','Lançamentos','lista'],
   ['analise','Análise','grafico'],
+  ['pj','Clínica (PJ)','banco'],
   ['lego','LEGO','bloco'],
   ['contas','Contas e bancos','banco'],
   ['dividas','Dívidas','divida'],
@@ -706,7 +707,7 @@ function renderMain(){
   m.innerHTML = VIEWS[S.view]();
   document.querySelectorAll('[data-nav]').forEach(a => {
     const v = a.dataset.nav;
-    const ativo = v === S.view || (v === 'mais' && a.closest('.bottom') && ['contas','dividas','receber','lego','mais'].includes(S.view));
+    const ativo = v === S.view || (v === 'mais' && a.closest('.bottom') && ['contas','dividas','receber','lego','pj','mais'].includes(S.view));
     a.classList.toggle('ativo', ativo);
     if (ativo) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
@@ -1913,9 +1914,44 @@ ACTS.excluirLego = ({ id }) => {
 };
 
 /* ---------------- mais: backup e acesso ---------------- */
+
+/* ---------------- Clínica / PJ (Centro de Alergia) ---------------- */
+const TETO_PJ = 50000;
+function contaPJ(){ return S.contas.find(c => /centro de alergia/i.test(c.nome)) || S.contas.find(c => c.esfera === 'profissional' && c.tipo === 'corrente'); }
+function distribuicaoMes(m, comPessoal){
+  const pj = contaPJ(); if (!pj) return { total: 0, itens: [] };
+  const itens = S.lancs.filter(l => l.conta_id === pj.id && mesDe(l.data) === m && !/akisa/i.test((l.descricao || '') + ' ' + (l.observacao || '')) &&
+    ((l.tipo === 'transferencia' && l.categoria === 'Retirada da clínica') || (comPessoal && l.tipo === 'despesa' && l.esfera === 'pessoal')));
+  return { total: itens.reduce((a, l) => a + Number(l.valor), 0), itens };
+}
+VIEWS.pj = () => {
+  const h = hoje(), m = mesDe(h), comP = S.f.pjPessoal !== false;
+  const d = distribuicaoMes(m, comP), sobra = TETO_PJ - d.total, pct = Math.min(100, d.total / TETO_PJ * 100);
+  const cor = d.total > TETO_PJ ? 'var(--neg,#c0392b)' : pct >= 90 ? '#e08a00' : 'var(--pos,#1f8f5f)';
+  const aviso = d.total > TETO_PJ ? `Passou do teto em ${money(d.total - TETO_PJ)}: o excedente sofre 10% de IRRF.` : pct >= 90 ? 'Quase no teto. Evite novas retiradas neste mês.' : `Ainda cabe ${money(sobra)} neste mês.`;
+  const meses = [5,4,3,2,1,0].map(i => mesAdd(m, -i));
+  const hist = meses.map(x => `<li class="linha"><div class="info"><div class="t">${nomeMes(x)}</div></div><div class="dir"><div class="valor ${distribuicaoMes(x, comP).total > TETO_PJ ? 'neg' : ''}">${money(distribuicaoMes(x, comP).total)}</div></div></li>`).join('');
+  const guias = S.cps.filter(c => c.esfera === 'profissional' && c.status === 'pendente').sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  return `
+  <div class="cab"><div><h1>Clínica (PJ)</h1><p>Centro de Alergia Ltda</p></div></div>
+  <section class="card" style="margin-bottom:16px">
+    <h2 style="margin:0 0 6px">Teto de ${money(TETO_PJ)} em ${nomeMes(m)}</h2>
+    <div style="font-size:1.6rem;font-weight:700">${money(d.total)}</div>
+    <div role="progressbar" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100" style="height:12px;background:rgba(128,128,128,.2);border-radius:8px;margin:10px 0;overflow:hidden"><div style="width:${pct}%;height:100%;background:${cor}"></div></div>
+    <p style="margin:0 0 10px"><b>${aviso}</b></p>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.9rem"><input type="checkbox" data-f="pjPessoal" ${comP ? 'checked' : ''}> Contar também despesas pessoais pagas pela PJ (aluguel, contas)</label>
+    <p style="font-size:.85rem;opacity:.75;margin:8px 0 0">Conta retiradas para você, exceto Akisa. A regra é por CPF: acima de R$ 50 mil no mês, 10% de IRRF sobre o total.</p>
+    ${d.itens.length ? `<ul class="lista" style="margin-top:10px">${d.itens.sort((a,b)=>a.data.localeCompare(b.data)).map(l => `<li class="linha"><div class="info"><div class="t">${esc(l.descricao || l.categoria)}</div><div class="s">${fData(l.data)}</div></div><div class="dir"><div class="valor">${money(l.valor)}</div></div></li>`).join('')}</ul>` : ''}
+  </section>
+  <h2 style="margin:0 0 10px">Últimos meses</h2>
+  <section class="card" style="margin-bottom:16px"><ul class="lista">${hist}</ul></section>
+  <h2 style="margin:0 0 10px">Guias e vencimentos</h2>
+  <section class="card">${guias.length ? `<ul class="lista">${guias.map(linhaCP).join('')}</ul>` : '<p>Nenhuma guia pendente da clínica.</p>'}</section>`;
+};
 VIEWS.mais = () => `
   <div class="cab"><div><h1>Mais</h1><p>${esc(S.user ? S.user.email : '')}</p></div></div>
   <section class="card menu-lista" style="margin-bottom:16px" data-so-mobile>
+    <a href="#pj">${ic('banco')}<span>Clínica (PJ)<small>Teto de R$ 50 mil e guias do Centro de Alergia</small></span></a>
     <a href="#receber">${ic('receber')}<span>A receber<small>Pagamentos e repasses que ainda vão entrar</small></span></a>
     <a href="#lego">${ic('bloco')}<span>LEGO<small>Quanto foi gasto em LEGO, mês a mês</small></span></a>
     <a href="#contas">${ic('banco')}<span>Contas e bancos<small>Saldos, cartões e investimentos</small></span></a>
@@ -2030,6 +2066,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const el = e.target;
   if (el.matches('select[data-f]')) { S.f[el.dataset.f] = el.value; renderMain(); }
+  if (el.matches('input[type=checkbox][data-f]')) { S.f[el.dataset.f] = el.checked; renderMain(); }
   if (el.matches('[data-act-change=tipoConta]')) aoMudarTipoConta(el);
 });
 document.addEventListener('submit', async e => {
