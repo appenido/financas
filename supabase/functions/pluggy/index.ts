@@ -24,7 +24,7 @@ async function apiKey() {
 async function pg(path: string, init: RequestInit = {}) {
   const r = await fetch(API + path, { ...init, headers: { 'Content-Type': 'application/json', 'X-API-KEY': await apiKey(), ...(init.headers || {}) } });
   const t = await r.text();
-  if (!r.ok) throw new Error('Pluggy ' + r.status + ': ' + t.slice(0, 300));
+  if (!r.ok) throw new Error('Pluggy ' + r.status + ' em ' + path.split('?')[0] + ' (' + (path.split('?')[1] || '').replace(/after=[^&]+/, 'after=…') + '): ' + t.slice(0, 300));
   return t ? JSON.parse(t) : {};
 }
 const dataBR = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
@@ -83,11 +83,12 @@ Deno.serve(async req => {
         const de = /^\d{4}-\d{2}-\d{2}$/.test(b.de || '') ? b.de : new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
         const out: unknown[] = [];
         // GET /v2/transactions (paginação por cursor: segue o campo "next" até vir vazio)
-        let r: Record<string, unknown> | null = null;
+        let r: Record<string, unknown> | null = null, ultErro: unknown = null;
         for (const q of [`dateFrom=${de}`, `from=${de}`, '']) {
           try { r = await pg(`/v2/transactions?accountId=${acc.id}${q ? '&' + q : ''}`); break; }
-          catch (e) { if (!/Pluggy 400/.test(String((e as Error).message))) throw e; }
+          catch (e) { ultErro = e; if (!/Pluggy 40[03]/.test(String((e as Error).message))) throw e; }
         }
+        if (!r) throw ultErro;
         for (let p = 0; r && p < 60; p++) {
           for (const t of (r.results as Record<string, unknown>[]) || []) {
             if (t.status === 'PENDING') continue;
