@@ -1432,7 +1432,7 @@ ACTS.openFinance = async () => {
         <table class="tab" style="margin-top:8px"><tbody>${it.contas.map(a => { const lig = S.contas.find(c => c.pluggy_account_id === a.id); return `<tr>
           <td>${esc(a.nome)}${a.numero ? ` <small>${esc(a.numero)}</small>` : ''}<br><small>${a.tipo === 'CREDIT' ? 'Cartão' : 'Conta'} · saldo ${brl(Number(a.saldo) || 0)}</small></td>
           <td><select data-of-map="${a.id}" aria-label="Conta na central">${opc(lig && lig.id)}</select></td>
-          <td class="n"><button type="button" class="btn primario" data-act="ofSync" data-acc="${a.id}" ${lig ? '' : 'disabled'}>Buscar lançamentos</button></td></tr>`; }).join('') || '<tr><td>Nenhuma conta encontrada nessa conexão.</td></tr>'}</tbody></table></section>`).join('');
+          <td class="n"><button type="button" class="btn primario" data-act="ofSync" data-acc="${a.id}" ${lig ? '' : 'disabled'}>Buscar lançamentos</button></td></tr>`; }).join('') || `<tr><td>Nenhuma conta encontrada nessa conexão.${it.diag ? `<br><small style="word-break:break-all">${esc(it.diag)}</small>` : ''}</td></tr>`}</tbody></table></section>`).join('');
   abrir(`<div class="modal"><header><h2>Open Finance</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
     <div class="corpo">${corpo}<p style="font-size:13px;margin:10px 0 0">Ligue cada conta do banco a uma conta da central. Depois, “Buscar lançamentos” traz o extrato para você conferir antes de importar; o que já foi importado não se repete.</p></div>
     <footer><button type="button" class="btn" data-act="fechar">Fechar</button><button type="button" class="btn primario" data-act="ofConectar">${ic('plus')}Conectar banco</button></footer></div>`);

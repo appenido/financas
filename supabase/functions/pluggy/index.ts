@@ -60,7 +60,8 @@ Deno.serve(async req => {
           try {
             const it = await pg('/items/' + i.item_id);
             const contas = (await pg('/accounts?itemId=' + i.item_id)).results || [];
-            return { ...i, status: it.status, erro: it.error?.message || null, atualizado: it.lastUpdatedAt,
+            const diag = contas.length ? null : JSON.stringify({ status: it.status, execucao: it.executionStatus, conector: it.connector?.name, produtos: it.products, detalhe: it.statusDetail, erro: it.error }).slice(0, 900);
+            return { ...i, diag, status: it.status, erro: it.error?.message || null, atualizado: it.lastUpdatedAt,
               contas: contas.map((a: Record<string, unknown>) => ({ id: a.id, nome: a.name, numero: a.number, tipo: a.type, subtipo: a.subtype, saldo: a.balance })) };
           } catch (e) { return { ...i, erro: String((e as Error).message), contas: [] }; }
         }));
