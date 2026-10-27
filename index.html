@@ -1469,7 +1469,12 @@ ACTS.ofSync = async ({ acc }, el) => {
   const existentes = new Set(await buscarTudo(() => sb.from('fin_lancamentos').select('fitid').eq('conta_id', conta.id).like('fitid', 'pluggy:%').order('id')).then(x => x.map(y => y.fitid)));
   const historico = new Map();
   for (const l of [...S.lancs].reverse()) if (l.categoria) historico.set(l.tipo + '|' + chaveDesc(l.descricao), l.categoria);
-  S.imp = { conta, formato: 'Open Finance', inverter: false, historico, regs: r.transacoes.sort((a, b) => b.data.localeCompare(a.data)).map(t => ({ ...t, dup: existentes.has(t.fitid) })) };
+  // lançamentos já existentes na conta (OFX ou manuais): mesma data e mesmo valor contam como já importados
+  const menor = r.transacoes.reduce((m, t) => t.data < m ? t.data : m, '9999');
+  const antigos = await buscarTudo(() => sb.from('fin_lancamentos').select('data,valor,tipo').eq('conta_id', conta.id).gte('data', menor).order('id'));
+  const conta2 = new Map(); for (const l of antigos) { const k = l.data + '|' + l.tipo + '|' + Number(l.valor).toFixed(2); conta2.set(k, (conta2.get(k) || 0) + 1); }
+  const jaTem = t => { if (existentes.has(t.fitid)) return true; const k = t.data + '|' + (t.valor < 0 ? 'despesa' : 'receita') + '|' + Math.abs(t.valor).toFixed(2); const n = conta2.get(k) || 0; if (n) { conta2.set(k, n - 1); return true; } return false; };
+  S.imp = { conta, formato: 'Open Finance', inverter: false, historico, regs: r.transacoes.sort((a, b) => b.data.localeCompare(a.data)).map(t => ({ ...t, dup: jaTem(t) })) };
   aplicarSinais();
   renderImport();
 };
