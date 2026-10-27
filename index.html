@@ -1166,7 +1166,7 @@ VIEWS.lancamentos = () => {
       : `<div class="vazio">${lancs.length ? 'Nenhum lançamento com esses filtros.' : 'Nenhum lançamento em ' + nomeMes(m) + '.'}<br><button class="btn" data-act="novoLanc">${ic('plus')}Novo lançamento</button></div>`}
   </section>`;
 };
-const cabLanc = () => `<div class="cab"><div><h1>Lançamentos</h1><p>Tudo o que entrou e saiu</p></div><div class="acoes"><button class="btn" data-act="importar">${ic('upload')}Importar extrato</button><button class="btn primario" data-act="novoLanc">${ic('plus')}Novo lançamento</button></div></div>`;
+const cabLanc = () => `<div class="cab"><div><h1>Lançamentos</h1><p>Tudo o que entrou e saiu</p></div><div class="acoes"><button class="btn" data-act="openFinance">${ic('banco')}Open Finance</button><button class="btn" data-act="importar">${ic('upload')}Importar extrato</button><button class="btn primario" data-act="novoLanc">${ic('plus')}Novo lançamento</button></div></div>`;
 function linhaLanc(l){
   const ico = l.tipo === 'receita' ? 'cima' : l.tipo === 'despesa' ? 'baixo' : 'transf';
   const conta = l.tipo === 'transferencia' ? `${nomeConta(l.conta_id) || 'Conta fora da central'} para ${nomeConta(l.conta_destino_id) || 'conta fora da central'}` : nomeConta(l.conta_id);
@@ -1363,7 +1363,7 @@ function renderImport(){
   abrir(`<form class="modal" data-form="impConfirmar" novalidate>
     <header><h2>Conferir importação</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
     <div class="corpo">
-      <p style="margin:0 0 10px">${I.regs.length} lançamentos no arquivo ${I.formato} para <b>${esc(I.conta.nome)}</b>${dups ? `. ${dups} já tinham sido importados e ficam de fora` : ''}.</p>
+      <p style="margin:0 0 10px">${I.regs.length} lançamentos ${I.formato === 'Open Finance' ? 'recebidos pelo Open Finance' : 'no arquivo ' + I.formato} para <b>${esc(I.conta.nome)}</b>${dups ? `. ${dups} já tinham sido importados e ficam de fora` : ''}.</p>
       ${I.formato === 'CSV' ? `<label style="display:inline-flex;gap:8px;align-items:center;margin-bottom:10px;font-size:14px"><input type="checkbox" data-act="impInverter" ${I.inverter ? 'checked' : ''}> Inverter sinais (use se as compras aparecerem como receita)</label>` : ''}
       <div class="prev rolavel"><table class="tab"><thead><tr><th><input type="checkbox" data-act="impTodos" aria-label="Marcar todos" ${novos === I.regs.length - dups ? 'checked' : ''}></th><th>Data</th><th>Descrição</th><th class="n">Valor</th><th>Categoria</th></tr></thead><tbody>
       ${I.regs.map((r, i) => `<tr class="${r.dup ? 'dup' : ''}"><td><input type="checkbox" data-act="impMarcar" data-i="${i}" ${r.ok ? 'checked' : ''} ${r.dup ? 'disabled' : ''} aria-label="Importar"></td>
@@ -1390,6 +1390,88 @@ FORMS.impConfirmar = async () => {
   fechar(); S.imp = null;
   toast(`${regs.length} lançamentos importados. Confira o saldo da conta.`);
   await recarregar();
+};
+
+/* ---------------- Open Finance (Pluggy) ---------------- */
+async function pluggy(acao, extra = {}){
+  const { data, error } = await sb.functions.invoke('pluggy', { body: { acao, ...extra } });
+  if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch {} throw new Error(m); }
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+let pluggyJs = null;
+function carregarPluggy(){
+  if (window.PluggyConnect) return Promise.resolve();
+  return pluggyJs || (pluggyJs = new Promise((ok, falha) => {
+    const s = document.createElement('script'); s.src = 'https://cdn.pluggy.ai/pluggy-connect/latest/pluggy-connect.js';
+    s.onload = ok; s.onerror = () => { pluggyJs = null; falha(new Error('Não consegui abrir o Pluggy. Verifique a internet.')); };
+    document.head.appendChild(s);
+  }));
+}
+async function abrirWidget(itemId){
+  await carregarPluggy();
+  const { token } = await pluggy('connect_token', itemId ? { itemId } : {});
+  fechar();
+  new window.PluggyConnect({
+    connectToken: token, ...(itemId ? { updateItem: itemId } : {}),
+    onSuccess: async ({ item }) => { try { await pluggy('salvar_item', { itemId: item.id }); toast('Banco conectado'); await ACTS.openFinance(); } catch (e) { erro(e); } },
+    onError: e => toast('Pluggy: ' + ((e && e.message) || 'erro na conexão'), true)
+  }).init();
+}
+const STATUS_PLUGGY = { UPDATED:'atualizado', UPDATING:'atualizando…', LOGIN_ERROR:'precisa reconectar', OUTDATED:'desatualizado', WAITING_USER_INPUT:'aguardando você', WAITING_USER_ACTION:'aguardando você' };
+ACTS.openFinance = async () => {
+  abrir(`<div class="modal"><header><h2>Open Finance</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header><div class="corpo"><p>Carregando conexões…</p></div></div>`);
+  let itens;
+  try { ({ itens } = await pluggy('itens')); } catch (e) { itens = null; S.ofErro = e.message; }
+  const opc = sel => `<option value="">Não importar</option>` + S.contas.filter(c => c.ativa !== false).map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.nome)}</option>`).join('');
+  const corpo = itens === null ? `<p class="erro">${esc(S.ofErro)}</p>`
+    : !itens.length ? `<p style="margin:0">Nenhum banco conectado ainda. Toque em <b>Conectar banco</b> e escolha Itaú, Sicoob, Nubank, Banco do Brasil ou Caixa. A autorização é feita no próprio app do banco.</p>`
+    : itens.map(it => `<section class="card" style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+        <div><b>${esc(it.banco || 'Banco')}</b> <span class="chip ${it.status === 'UPDATED' ? '' : 'ouro'}">${STATUS_PLUGGY[it.status] || esc(it.status || '?')}</span>${it.ultima_sync ? `<br><small>Última importação: ${new Date(it.ultima_sync).toLocaleString('pt-BR')}</small>` : ''}${it.erro ? `<br><small class="erro">${esc(it.erro)}</small>` : ''}</div>
+        <div style="display:flex;gap:6px"><button type="button" class="btn" data-act="ofReconectar" data-item="${it.item_id}">Reconectar</button><button type="button" class="btn" data-act="ofRemover" data-item="${it.item_id}" data-banco="${esc(it.banco || '')}">Remover</button></div></div>
+        <table class="tab" style="margin-top:8px"><tbody>${it.contas.map(a => { const lig = S.contas.find(c => c.pluggy_account_id === a.id); return `<tr>
+          <td>${esc(a.nome)}${a.numero ? ` <small>${esc(a.numero)}</small>` : ''}<br><small>${a.tipo === 'CREDIT' ? 'Cartão' : 'Conta'} · saldo ${brl(Number(a.saldo) || 0)}</small></td>
+          <td><select data-of-map="${a.id}" aria-label="Conta na central">${opc(lig && lig.id)}</select></td>
+          <td class="n"><button type="button" class="btn primario" data-act="ofSync" data-acc="${a.id}" ${lig ? '' : 'disabled'}>Buscar lançamentos</button></td></tr>`; }).join('') || '<tr><td>Nenhuma conta encontrada nessa conexão.</td></tr>'}</tbody></table></section>`).join('');
+  abrir(`<div class="modal"><header><h2>Open Finance</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
+    <div class="corpo">${corpo}<p style="font-size:13px;margin:10px 0 0">Ligue cada conta do banco a uma conta da central. Depois, “Buscar lançamentos” traz o extrato para você conferir antes de importar; o que já foi importado não se repete.</p></div>
+    <footer><button type="button" class="btn" data-act="fechar">Fechar</button><button type="button" class="btn primario" data-act="ofConectar">${ic('plus')}Conectar banco</button></footer></div>`);
+  dlg.classList.add('largo');
+};
+ACTS.ofConectar = () => abrirWidget(null);
+ACTS.ofReconectar = ({ item }) => abrirWidget(item);
+ACTS.ofRemover = ({ item, banco }) => confirmar('Remover conexão?', `${esc(banco || 'Esse banco')} deixa de ser consultado pelo Open Finance. Os lançamentos já importados continuam na central.`, 'Remover', async () => {
+  await pluggy('remover_item', { itemId: item });
+  toast('Conexão removida'); await recarregar(); await ACTS.openFinance();
+}, true);
+document.addEventListener('change', async e => {
+  const el = e.target.closest('[data-of-map]'); if (!el) return;
+  const acc = el.dataset.ofMap, nova = el.value;
+  try {
+    await q(sb.from('fin_contas').update({ pluggy_account_id: null }).eq('pluggy_account_id', acc));
+    if (nova) await q(sb.from('fin_contas').update({ pluggy_account_id: acc }).eq('id', nova));
+    S.contas.forEach(c => { if (c.pluggy_account_id === acc) c.pluggy_account_id = null; if (c.id === nova) c.pluggy_account_id = acc; });
+    const b = dlg.querySelector(`[data-act=ofSync][data-acc="${acc}"]`); if (b) b.disabled = !nova;
+    toast(nova ? 'Conta ligada' : 'Conta desligada');
+  } catch (err) { erro(err); }
+});
+ACTS.ofSync = async ({ acc }, el) => {
+  const conta = S.contas.find(c => c.pluggy_account_id === acc); if (!conta) return;
+  if (el) { el.disabled = true; el.textContent = 'Buscando…'; }
+  // a partir da última importação pelo Open Finance (com folga de 7 dias); na primeira vez, 12 meses
+  const ult = await q(sb.from('fin_lancamentos').select('data').eq('conta_id', conta.id).like('fitid', 'pluggy:%').order('data', { ascending:false }).limit(1));
+  const base = ult.length ? new Date(ult[0].data + 'T12:00:00') : null;
+  const de = base ? new Date(base.getTime() - 7 * 864e5) : new Date(Date.now() - 365 * 864e5);
+  let r;
+  try { r = await pluggy('transacoes', { accountId: acc, de: de.toISOString().slice(0, 10) }); }
+  catch (e) { if (el) { el.disabled = false; el.textContent = 'Buscar lançamentos'; } throw e; }
+  if (!r.transacoes.length) { fechar(); return toast('Nenhum lançamento novo nesse período.'); }
+  const existentes = new Set(await buscarTudo(() => sb.from('fin_lancamentos').select('fitid').eq('conta_id', conta.id).like('fitid', 'pluggy:%').order('id')).then(x => x.map(y => y.fitid)));
+  const historico = new Map();
+  for (const l of [...S.lancs].reverse()) if (l.categoria) historico.set(l.tipo + '|' + chaveDesc(l.descricao), l.categoria);
+  S.imp = { conta, formato: 'Open Finance', inverter: false, historico, regs: r.transacoes.sort((a, b) => b.data.localeCompare(a.data)).map(t => ({ ...t, dup: existentes.has(t.fitid) })) };
+  aplicarSinais();
+  renderImport();
 };
 
 /* ---------------- contas e bancos ---------------- */
@@ -1957,6 +2039,7 @@ VIEWS.mais = () => `
     <a href="#contas">${ic('banco')}<span>Contas e bancos<small>Saldos, cartões e investimentos</small></span></a>
     <a href="#dividas">${ic('divida')}<span>Dívidas<small>Financiamentos e empréstimos</small></span></a>
     <button type="button" data-act="importar">${ic('upload')}<span>Importar extrato<small>OFX ou CSV do banco</small></span></button>
+    <button type="button" data-act="openFinance">${ic('banco')}<span>Open Finance<small>Itaú, Sicoob, Nubank, BB e Caixa direto do banco</small></span></button>
   </section>
   <h2 style="margin:0 0 10px">Backup</h2>
   <section class="card menu-lista" style="margin-bottom:16px">
