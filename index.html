@@ -72,6 +72,21 @@ main{padding:20px 16px 110px;max-width:1180px;margin:0 auto}
 .fab{position:fixed;right:16px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:21;width:56px;height:56px;border-radius:18px;border:0;background:var(--teal);color:var(--on-teal);display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgba(0,60,55,.28)}
 .fab svg.i{width:26px;height:26px;stroke-width:2.2}
 .marca{display:flex;align-items:center;gap:10px;min-width:0}
+.modos{display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(255,255,255,.1)}
+.side .modos{margin:0 8px 16px}
+.modos button{flex:1;border:0;border-radius:8px;padding:7px 8px;background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer;opacity:.75}
+.modos button.ativo{background:#fff;color:var(--navy);opacity:1;font-weight:600}
+.top .modos button{padding:6px 7px;font-size:12px}
+.escolha-modo{max-width:640px;margin:8vh auto 0;text-align:center}
+.escolha-modo h1{margin:0 0 6px}
+.escolha-modo p{margin:0 0 24px;color:var(--muted,#667)}
+.cartoes-modo{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+@media (max-width:560px){.cartoes-modo{grid-template-columns:1fr}}
+.cartoes-modo button{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:22px;border-radius:16px;border:1px solid var(--line,#dde);background:var(--card,#fff);color:inherit;font:inherit;cursor:pointer}
+.cartoes-modo button:hover{border-color:var(--navy)}
+.cartoes-modo button b{font-size:20px}
+.cartoes-modo button span{font-size:14px;opacity:.75}
+.cartoes-modo .i{width:28px;height:28px}
 .marca b{display:block;font-size:15px;font-weight:600;line-height:1.2}
 .marca span{display:block;font-size:12px;color:var(--on-navy-2);line-height:1.2}
 .logo{width:34px;height:34px;flex:none}
@@ -546,6 +561,7 @@ const S = {
   contas: [], saldos: {}, cps: [], crs: [], dividas: [], lancs: [], lego: [], legoErro: false, desde: null, extra: {},
   f: { cpStatus:'pendente', cpBusca:'', crStatus:'pendente', crBusca:'', lMes: mesDe(hoje()), lTipo:'', lConta:'', lEsfera:'', lBusca:'', aPeriodo: 6, aEsfera:'', contasInativas:false, gStatus:'todas', gCanal:'', gBusca:'' },
   oculto: lerLocal('cf-oculto', false),
+  modo: lerLocal('cf-modo', null), raw: null,
   imp: null
 };
 const VIEWS = {};
@@ -576,13 +592,45 @@ async function carregar(){
     buscarTudo(() => sb.from('fin_lancamentos').select('*').gte('data', desde).order('data', { ascending:false }).order('criado_em', { ascending:false }).order('id')),
     buscarTudo(() => sb.from('fin_lego').select('*').order('data', { ascending:false }).order('id')).catch(() => null)
   ]);
-  S.contas = contas; S.cps = cps; S.dividas = dividas;
-  S.legoErro = lego === null; S.lego = lego || [];
-  S.crs = crs.sort((a, b) => (a.previsao || '9999').localeCompare(b.previsao || '9999') || String(a.descricao).localeCompare(String(b.descricao), 'pt-BR')); S.lancs = lancs; S.desde = desde; S.extra = {};
+  S.legoErro = lego === null;
+  S.raw = { contas, cps, dividas, lancs, lego: lego || [],
+    crs: crs.sort((a, b) => (a.previsao || '9999').localeCompare(b.previsao || '9999') || String(a.descricao).localeCompare(String(b.descricao), 'pt-BR')) };
+  S.desde = desde; S.extra = {};
+  aplicarModo();
   S.saldos = Object.fromEntries(saldos.map(s => [s.conta_id, Number(s.saldo)]));
   S.pronto = true;
 }
 async function recarregar(){ await carregar(); renderMain(); }
+/* ---------------- pessoal x profissional ---------------- */
+const MODOS = { pessoal: 'Pessoal', profissional: 'Profissional', tudo: 'Tudo' };
+const esfPadrao = () => S.modo === 'profissional' ? 'profissional' : 'pessoal';
+function aplicarModo(){
+  const R = S.raw; if (!R) return;
+  const m = S.modo === 'pessoal' || S.modo === 'profissional' ? S.modo : null;
+  if (!m) { S.contas = R.contas; S.cps = R.cps; S.crs = R.crs; S.dividas = R.dividas; S.lancs = R.lancs; S.lego = R.lego; return; }
+  S.contas = R.contas.filter(c => (c.esfera || 'pessoal') === m);
+  const ids = new Set(S.contas.map(c => c.id));
+  const doModo = x => (x.esfera || 'pessoal') === m;
+  S.cps = R.cps.filter(doModo); S.crs = R.crs.filter(doModo); S.dividas = R.dividas.filter(doModo);
+  // lançamentos da esfera; transferências entram se tocarem uma conta da esfera
+  S.lancs = R.lancs.filter(l => l.tipo === 'transferencia' ? (ids.has(l.conta_id) || ids.has(l.conta_destino_id)) : doModo(l));
+  S.lego = m === 'pessoal' ? R.lego : [];
+  if (S.f.lConta && !ids.has(S.f.lConta)) S.f.lConta = '';
+}
+ACTS.modo = ({ m }) => {
+  S.modo = m; gravarLocal('cf-modo', m); S.f.lEsfera = ''; S.f.aEsfera = '';
+  aplicarModo(); montarApp();
+};
+const seletorModo = () => `<div class="modos" role="group" aria-label="Ver finanças">${Object.entries(MODOS).map(([k, t]) =>
+  `<button type="button" data-act="modo" data-m="${k}" class="${S.modo === k ? 'ativo' : ''}" aria-pressed="${S.modo === k}">${t}</button>`).join('')}</div>`;
+function telaModo(){
+  return `<div class="escolha-modo"><h1>${saudacao()}${nomeUsuario() ? ', ' + esc(nomeUsuario().split(' ')[0]) : ''}</h1><p>O que você quer ver agora?</p>
+    <div class="cartoes-modo">
+      <button type="button" data-act="modo" data-m="pessoal">${ic('home')}<b>Pessoal</b><span>Suas contas, cartões, casa, família e investimentos</span></button>
+      <button type="button" data-act="modo" data-m="profissional">${ic('banco')}<b>Profissional</b><span>Centro de Alergia: repasses, consultas, impostos e retiradas</span></button>
+    </div>
+    <button type="button" class="btn" data-act="modo" data-m="tudo">Ver tudo junto</button></div>`;
+}
 
 const contaPor = id => S.contas.find(c => c.id === id);
 const nomeConta = id => (contaPor(id) || {}).nome || '';
@@ -613,7 +661,10 @@ function categorias(tipo){
 const datalist = (id, tipo) => `<datalist id="${id}">${categorias(tipo).map(c => `<option value="${esc(c)}">`).join('')}</datalist>`;
 function lancsDoMes(m){
   if (m + '-01' >= S.desde) return S.lancs.filter(l => mesDe(l.data) === m);
-  return S.extra[m] || null;
+  const x = S.extra[m]; if (!x) return null;
+  const md = S.modo === 'pessoal' || S.modo === 'profissional' ? S.modo : null; if (!md) return x;
+  const ids = new Set(S.contas.map(c => c.id));
+  return x.filter(l => l.tipo === 'transferencia' ? (ids.has(l.conta_id) || ids.has(l.conta_destino_id)) : (l.esfera || 'pessoal') === md);
 }
 async function carregarMesAntigo(m){
   const fim = mesAdd(m, 1) + '-01';
@@ -671,7 +722,8 @@ function montarApp(){
   <div class="app">
     <aside class="side">
       <div class="marca">${LOGO}<div><b>Central Financeira</b><span>${esc(nomeUsuario())}</span></div></div>
-      <nav aria-label="Seções">${NAV.map(([v,t,i]) => `<a href="#${v}" data-nav="${v}">${ic(i)}<span>${t}</span><span class="badge" data-badge="${v}" hidden></span></a>`).join('')}</nav>
+      ${S.modo ? seletorModo() : ''}
+      <nav aria-label="Seções">${navModo(NAV).map(([v,t,i]) => `<a href="#${v}" data-nav="${v}">${ic(i)}<span>${t}</span><span class="badge" data-badge="${v}" hidden></span></a>`).join('')}</nav>
       <div class="rodape">
         <button type="button" data-act="ocultar" data-olho>${ic(S.oculto ? 'olhoOff' : 'olho')}<span>${S.oculto ? 'Mostrar valores' : 'Ocultar valores'}</span></button>
         <button type="button" data-act="sair">${ic('sair')}<span>Sair</span></button>
@@ -680,15 +732,17 @@ function montarApp(){
     <div>
       <header class="top">
         <div class="marca">${LOGO}<div><b>Central Financeira</b></div></div>
+        ${S.modo ? seletorModo() : ''}
         <button class="ic" type="button" data-act="ocultar" data-olho aria-label="${S.oculto ? 'Mostrar valores' : 'Ocultar valores'}">${ic(S.oculto ? 'olhoOff' : 'olho')}</button>
       </header>
       <main id="main"></main>
     </div>
-    <nav class="bottom" aria-label="Seções">${NAV_MOBILE.map(([v,t,i]) => `<a href="#${v}" data-nav="${v}">${ic(i)}<span>${t}</span><span class="badge" data-badge="${v}" hidden></span></a>`).join('')}</nav>
+    <nav class="bottom" aria-label="Seções">${navModo(NAV_MOBILE).map(([v,t,i]) => `<a href="#${v}" data-nav="${v}">${ic(i)}<span>${t}</span><span class="badge" data-badge="${v}" hidden></span></a>`).join('')}</nav>
     <button class="fab" type="button" data-act="novoLanc" aria-label="Novo lançamento" title="Novo lançamento">${ic('plus')}</button>
   </div>`;
   irPara(location.hash.slice(1) || 'painel', true);
 }
+function navModo(lista){ return lista.filter(([v]) => !(S.modo === 'pessoal' && v === 'pj') && !(S.modo === 'profissional' && v === 'lego')); }
 function nomeUsuario(){ return (S.user && S.user.user_metadata && S.user.user_metadata.nome) || ''; }
 function irPara(v, sub){
   if (!VIEWS[v]) v = 'painel';
@@ -704,7 +758,7 @@ function renderMain(){
   const ae = document.activeElement;
   const foco = ae && ae.id && m.contains(ae) ? { id: ae.id, pos: ('selectionStart' in ae) ? ae.selectionStart : null } : null;
   depois = [];
-  m.innerHTML = VIEWS[S.view]();
+  m.innerHTML = S.modo ? VIEWS[S.view]() : telaModo();
   document.querySelectorAll('[data-nav]').forEach(a => {
     const v = a.dataset.nav;
     const ativo = v === S.view || (v === 'mais' && a.closest('.bottom') && ['contas','dividas','receber','lego','pj','mais'].includes(S.view));
@@ -888,7 +942,7 @@ function opcoesContas(sel, { semCartao = false, soCartao = false, vazio = 'Não 
 }
 const optEsfera = v => `<option value="pessoal" ${v !== 'profissional' ? 'selected' : ''}>Pessoal</option><option value="profissional" ${v === 'profissional' ? 'selected' : ''}>Profissional (consultório)</option>`;
 function formCP(c){
-  const novo = !c; c = c || { recorrencia:'nenhuma', esfera:'pessoal', vencimento: hoje() };
+  const novo = !c; c = c || { recorrencia:'nenhuma', esfera: esfPadrao(), vencimento: hoje() };
   const temCartao = S.contas.some(x => x.tipo === 'cartao');
   const pago = c.status === 'pago';
   abrir(`<form class="modal" data-form="cp" data-id="${c.id || ''}" novalidate>
@@ -1064,7 +1118,7 @@ VIEWS.receber = () => {
   <section class="card" style="padding-bottom:6px">${corpo}</section>`;
 };
 function formCR(c){
-  const novo = !c; c = c || { esfera:'pessoal' };
+  const novo = !c; c = c || { esfera: esfPadrao() };
   const rec = c.status === 'recebido';
   abrir(`<form class="modal" data-form="cr" data-id="${c.id || ''}" novalidate>
     <header><h2>${novo ? 'Nova conta a receber' : rec ? 'Valor recebido' : 'Conta a receber'}</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
@@ -1179,7 +1233,7 @@ ACTS.mes = ({ d }) => { S.f.lMes = d === '0' ? mesDe(hoje()) : mesAdd(S.f.lMes, 
 function acharLanc(id){ return S.lancs.find(l => l.id === id) || Object.values(S.extra).flat().find(l => l.id === id); }
 function formLanc(l, tipoPadrao){
   const novo = !l;
-  l = l || { tipo: tipoPadrao || 'despesa', data: hoje(), esfera: 'pessoal', conta_id: S.f.lConta || (S.contas.find(c => c.ativa && c.tipo === 'corrente') || {}).id };
+  l = l || { tipo: tipoPadrao || 'despesa', data: hoje(), esfera: esfPadrao(), conta_id: S.f.lConta || (S.contas.find(c => c.ativa && c.tipo === 'corrente') || {}).id };
   const cp = l.conta_pagar_id ? S.cps.find(c => c.id === l.conta_pagar_id) : null;
   abrir(`<form class="modal" data-form="lanc" data-id="${l.id || ''}" novalidate>
     <header><h2>${novo ? 'Novo lançamento' : 'Editar lançamento'}</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
@@ -1516,7 +1570,7 @@ function cardConta(c){
 }
 ACTS.verLancConta = ({ id }) => { S.f.lConta = id; S.f.lMes = mesDe(hoje()); irPara('lancamentos'); };
 function formConta(c){
-  const novo = !c; c = c || { tipo: 'corrente', esfera: 'pessoal', ativa: true, saldo_inicial: 0 };
+  const novo = !c; c = c || { tipo: 'corrente', esfera: esfPadrao(), ativa: true, saldo_inicial: 0 };
   abrir(`<form class="modal" data-form="conta" data-id="${c.id || ''}" novalidate>
     <header><h2>${novo ? 'Nova conta' : 'Editar conta'}</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
     <div class="corpo"><div class="campos">
@@ -1621,7 +1675,7 @@ function cardDivida(d){
   </article>`;
 }
 function formDivida(d){
-  const novo = !d; d = d || { tipo: 'emprestimo', esfera: 'pessoal', ativa: true, parcelas_pagas: 0 };
+  const novo = !d; d = d || { tipo: 'emprestimo', esfera: esfPadrao(), ativa: true, parcelas_pagas: 0 };
   const num = (n, l, v, extra = '') => `<label class="campo"><span>${l}</span><input name="${n}" inputmode="decimal" value="${esc(v)}" ${extra}></label>`;
   abrir(`<form class="modal" data-form="divida" data-id="${d.id || ''}" novalidate>
     <header><h2>${novo ? 'Nova dívida' : 'Editar dívida'}</h2><button type="button" class="ic" data-act="fechar" aria-label="Fechar">${ic('fechar')}</button></header>
@@ -2005,10 +2059,10 @@ ACTS.excluirLego = ({ id }) => {
 
 /* ---------------- Clínica / PJ (Centro de Alergia) ---------------- */
 const TETO_PJ = 50000;
-function contaPJ(){ return S.contas.find(c => /centro de alergia/i.test(c.nome)) || S.contas.find(c => c.esfera === 'profissional' && c.tipo === 'corrente'); }
+function contaPJ(){ const cs = (S.raw || S).contas; return cs.find(c => /centro de alergia/i.test(c.nome)) || cs.find(c => c.esfera === 'profissional' && c.tipo === 'corrente'); }
 function distribuicaoMes(m, comPessoal){
   const pj = contaPJ(); if (!pj) return { total: 0, itens: [] };
-  const itens = S.lancs.filter(l => l.conta_id === pj.id && mesDe(l.data) === m && !/akisa/i.test((l.descricao || '') + ' ' + (l.observacao || '')) &&
+  const itens = (S.raw || S).lancs.filter(l => l.conta_id === pj.id && mesDe(l.data) === m && !/akisa/i.test((l.descricao || '') + ' ' + (l.observacao || '')) &&
     ((l.tipo === 'transferencia' && l.categoria === 'Retirada da clínica') || (comPessoal && l.tipo === 'despesa' && l.esfera === 'pessoal')));
   return { total: itens.reduce((a, l) => a + Number(l.valor), 0), itens };
 }
@@ -2019,7 +2073,7 @@ VIEWS.pj = () => {
   const aviso = d.total > TETO_PJ ? `Passou do teto em ${money(d.total - TETO_PJ)}: o excedente sofre 10% de IRRF.` : pct >= 90 ? 'Quase no teto. Evite novas retiradas neste mês.' : `Ainda cabe ${money(sobra)} neste mês.`;
   const meses = [5,4,3,2,1,0].map(i => mesAdd(m, -i));
   const hist = meses.map(x => `<li class="linha"><div class="info"><div class="t">${nomeMes(x)}</div></div><div class="dir"><div class="valor ${distribuicaoMes(x, comP).total > TETO_PJ ? 'neg' : ''}">${money(distribuicaoMes(x, comP).total)}</div></div></li>`).join('');
-  const guias = S.cps.filter(c => c.esfera === 'profissional' && c.status === 'pendente').sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  const guias = (S.raw || S).cps.filter(c => c.esfera === 'profissional' && c.status === 'pendente').sort((a, b) => a.vencimento.localeCompare(b.vencimento));
   return `
   <div class="cab"><div><h1>Clínica (PJ)</h1><p>Centro de Alergia Ltda</p></div></div>
   <section class="card" style="margin-bottom:16px">
