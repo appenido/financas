@@ -82,14 +82,24 @@ Deno.serve(async req => {
         await exigeItem(acc.itemId);
         const de = /^\d{4}-\d{2}-\d{2}$/.test(b.de || '') ? b.de : new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
         const out: unknown[] = [];
-        for (let p = 1; p <= 40; p++) {
-          const r = await pg(`/transactions?accountId=${acc.id}&from=${de}&pageSize=500&page=${p}`);
-          for (const t of r.results || []) {
+        // GET /v2/transactions (paginação por cursor: segue o campo "next" até vir vazio)
+        let r: Record<string, unknown> | null = null;
+        for (const q of [`dateFrom=${de}`, `from=${de}`, '']) {
+          try { r = await pg(`/v2/transactions?accountId=${acc.id}${q ? '&' + q : ''}`); break; }
+          catch (e) { if (!/Pluggy 400/.test(String((e as Error).message))) throw e; }
+        }
+        for (let p = 0; r && p < 60; p++) {
+          for (const t of (r.results as Record<string, unknown>[]) || []) {
             if (t.status === 'PENDING') continue;
+            const data = dataBR(String(t.date));
+            if (data < de) continue;
             const v = Math.abs(Number(t.amount));
-            out.push({ fitid: 'pluggy:' + t.id, data: dataBR(t.date), descricao: String(t.description || t.descriptionRaw || '').trim(), valor: t.type === 'DEBIT' ? -v : v });
+            out.push({ fitid: 'pluggy:' + t.id, data, descricao: String(t.description || t.descriptionRaw || '').trim(), valor: t.type === 'DEBIT' ? -v : v });
           }
-          if (!r.totalPages || p >= r.totalPages) break;
+          const nx = r.next as string | null;
+          if (!nx) break;
+          const u = nx.startsWith('http') ? new URL(nx) : new URL(nx, API);
+          r = await pg(u.pathname + u.search);
         }
         await sb.from('fin_pluggy_itens').update({ ultima_sync: new Date().toISOString() }).eq('item_id', acc.itemId);
         return json({ transacoes: out, saldo: acc.balance, tipo: acc.type });
