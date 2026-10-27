@@ -99,7 +99,7 @@ Deno.serve(async req => {
           }
           const nx = r.next as string | null;
           if (!nx) break;
-          const u = nx.startsWith('http') ? new URL(nx) : new URL(nx, API);
+          const u = new URL(nx, API + '/v2/transactions'); // "next" pode vir completo, como caminho ou só como "?after=..."
           r = await pg(u.pathname + u.search);
         }
         await sb.from('fin_pluggy_itens').update({ ultima_sync: new Date().toISOString() }).eq('item_id', acc.itemId);
